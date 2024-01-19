@@ -1,0 +1,7 @@
+-dontobfuscate
+-dontwarn javax.naming.**
+-dontwarn org.apache.http.*
+#-keep class org.apache.http.** { *; }
+-keepclassmembers class * {
+    @Moriarty.UsedByJNI <methods>;
+}

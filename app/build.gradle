@@ -1,0 +1,197 @@
+import org.apache.tools.ant.taskdefs.condition.Os
+import com.google.common.base.Joiner
+
+import java.text.SimpleDateFormat
+
+apply plugin: 'com.android.application'
+
+def ndkDir = project.android.ndkDirectory.absolutePath
+
+def timestamp() {
+    def dateFormat = new SimpleDateFormat("yyyy-MM-dd-HHmm")
+    dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"))
+    return dateFormat.format(new Date())
+}
+
+def idForSimon() {
+    try {
+        def commit = new ByteArrayOutputStream()
+        exec {
+            // Require remote called simon because someone downstream might call my branch "upstream"
+            commandLine 'git', 'merge-base', 'simon/master', 'master'
+            standardOutput = commit
+        }
+        def shortUnique = new ByteArrayOutputStream()
+        exec {
+            commandLine 'git', 'rev-parse', '--short', commit.toString().trim()
+            standardOutput = shortUnique
+        }
+        return shortUnique.toString().trim()
+    } catch (ignored) {
+        return "UNOFFICIAL"
+    }
+}
+
+android {
+    useLibrary 'org.apache.http.legacy'
+    compileSdk 34
+    namespace "com.bgu.sherlock.Moriarty"
+
+    packagingOptions {
+        exclude 'META-INF/DEPENDENCIES'
+        exclude 'META-INF/LICENSE'
+        exclude 'META-INF/LICENSE.txt'
+        exclude 'META-INF/license.txt'
+        exclude 'META-INF/NOTICE'
+        exclude 'META-INF/NOTICE.txt'
+        exclude 'META-INF/notice.txt'
+        exclude 'META-INF/ASL2.0'
+    }
+    defaultConfig {
+        applicationId 'com.bgu.sherlock.Moriarty'
+        versionCode 120
+        versionName "1.0"
+        testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
+        minSdkVersion 14
+        targetSdkVersion 33
+        multiDexEnabled true
+
+        ndk {
+            moduleName "puzzles"
+            cFlags "-DANDROID -DSMALL_SCREEN -DSTYLUS_BASED -DNO_PRINTING -DCOMBINED -DVIVID_COLOURS"
+            // WARNING abiFilters "all" here can end up omitting lib dir; I don't know why
+        }
+        fileTree(dir: 'src/main/jni', include: '*.c').each { File f ->
+            def game = f.name.replace(".c", "")
+            def text = f.text
+            def match = text =~ /enum\s+\{\s*COL_[^,]+,\s*(COL_[^\}]+)\}/
+            if (match) {
+                def colours = match.group(1).replaceAll(/(?s)\/\*.*?\*\//, "").replaceAll(/#[^\n]*\n/, "")
+                        .trim().split(",")*.trim()*.replaceFirst(/^COL_/, "")*.toLowerCase()
+                        .findAll { it =~ /^[^=]+$/ } - ["ncolours", "crossedline"]
+                if (colours.any { it =~ /[^a-z0-9_]/ }) {
+                    throw new GradleException("Couldn't parse colours for " + game + ": " + match.group(1) + " -> " + colours)
+                }
+                resValue "string", game + "_colours", colours.join(',')
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            jniDebuggable true
+        }
+        release {
+            minifyEnabled true // about to be renamed to minifyEnabled
+            shrinkResources true
+            jniDebuggable false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+        }
+    }
+    productFlavors {
+    }
+    java {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+    lintOptions{
+        disable 'ProtectedPermissions'
+    }
+}
+
+android.applicationVariants.all{ variant ->
+
+    variant.getExternalNativeBuildProviders().forEach << {
+        // library is built, now build the executables: copy libpuzzles aside...
+        def prebuiltDir = file(variant.ndkCompile.soFolder.parent + '/prebuilt')
+        copy {
+            from(variant.ndkCompile.soFolder) {
+                include '**/libpuzzles.so'
+            }
+            into prebuiltDir
+        }
+
+        // use the same APP_ABI that NdkCompile.groovy does
+        String abiParam = 'APP_ABI='
+        Set<String> abiFilters = variant.ndkCompile.abiFilters
+        if (abiFilters != null && !abiFilters.isEmpty()) {
+            if (abiFilters.size() == 1) {
+                abiParam += abiFilters.iterator().next()
+            } else {
+                abiParam += Joiner.on((char)',').skipNulls().join(abiFilters.iterator())
+            }
+        } else {
+            abiParam += 'all'
+        }
+
+        // build the executables, with and without PIE
+        //noinspection GroovyAssignabilityCheck
+        def common = [
+                ndkDir.absolutePath + (Os.isFamily(Os.FAMILY_WINDOWS) ? '/ndk-build.cmd' : '/ndk-build'),
+                'NDK_PROJECT_PATH=null',
+                'APP_BUILD_SCRIPT=' + file('src/main/executable.mk').absolutePath,
+                'NDK_OUT=' + variant.ndkCompile.objFolder.absolutePath,
+                'NDK_LIBS_OUT=' + variant.ndkCompile.soFolder.absolutePath,
+                'PUZZLES_PREBUILT_DIR=' + prebuiltDir.absolutePath,
+                abiParam,
+                'NDK_LOG=1',
+                'NDK_DEBUG=' + (variant.ndkCompile.debuggable ? '1' : '0')]
+        exec {
+            commandLine common + [
+                    'APP_PLATFORM=android-9',  // 9 is earliest for x86 + mips
+                    'PUZZLESGEN_SUFFIX=-no-pie',
+                    'APP_PIE=false']
+        }
+        exec {
+            commandLine common + [
+                    'APP_PLATFORM=android-16',  // earliest for PIE
+                    'PUZZLESGEN_SUFFIX=-with-pie',
+                    'APP_PIE=true']
+        }
+
+        // rename to look like libraries, to get them installed
+        copy {
+            from(variant.ndkCompile.soFolder) {
+                include '**/puzzlesgen-*'
+                rename 'puzzlesgen-(.*)', 'libpuzzlesgen-$1.so'
+            }
+            into variant.ndkCompile.soFolder
+        }
+    }
+}
+
+dependencies {
+
+    constraints {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.0") {
+            because("kotlin-stdlib-jdk7 is now a part of kotlin-stdlib")
+        }
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0") {
+            because("kotlin-stdlib-jdk8 is now a part of kotlin-stdlib")
+        }
+    }
+
+    implementation files('libs/gson-1.1.jar')
+    implementation files('libs/httpclient-4.3.6.jar')
+    implementation files('libs/httpclientandroidlib-1.1.2.jar')
+    implementation files('libs/httpcore-4.3.3.jar')
+    implementation files('libs/httpmime-4.3.6.jar')
+    implementation files('libs/json-simple-1.1.jar')
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.gridlayout:gridlayout:1.0.0'
+    implementation 'androidx.legacy:legacy-support-v4:1.0.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.core:core:1.12.0'
+    implementation 'androidx.gridlayout:gridlayout:1.0.0'
+    implementation 'androidx.multidex:multidex:2.0.1' // Use the latest version
+    implementation "androidx.preference:preference-ktx:1.2.1"
+    implementation 'androidx.test.espresso:espresso-core:3.5.1'
+    testImplementation 'junit:junit:4.13.3'
+
+    testImplementation 'junit:junit:4.13.2'
+
+    testImplementation 'org.mockito:mockito-core:3.11.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+
+
+
+}

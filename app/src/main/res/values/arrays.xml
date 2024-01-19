@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+	<array name="orientationModes">
+		<item>unspecified</item>
+		<item>portrait</item>
+		<item>landscape</item>
+	</array>
+	<array name="orientationModeDescs">
+		<item>@string/orientationUnspecified</item>
+		<item>@string/orientationPortrait</item>
+		<item>@string/orientationLandscape</item>
+	</array>
+`	<array name="nightModes">
+		<item>on</item>
+		<item>auto</item>
+		<item>off</item>
+	</array>
+	<array name="nightModeDescs">
+		<item>@string/nightModeOn</item>
+		<item>@string/nightModeAuto</item>
+		<item>@string/nightModeOff</item>
+	</array>
+	<array name="limitDpiModes">
+		<item>off</item>
+		<item>auto</item>
+		<item>on</item>
+	</array>
+	<array name="limitDpiModeDescs">
+		<item>@string/limitDpiModeOff</item>
+		<item>@string/limitDpiModeAuto</item>
+		<item>@string/limitDpiModeOn</item>
+	</array>
+	<array name="chooserStyles">
+		<item>list</item>
+		<item>grid</item>
+	</array>
+	<array name="chooserStyleDescs">
+		<item>@string/chooserStyleList</item>
+		<item>@string/chooserStyleGrid</item>
+	</array>
+</resources>
